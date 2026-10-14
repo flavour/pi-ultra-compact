@@ -10,6 +10,7 @@
 
 import { UltraCompactEngine } from "./engine";
 import type { UltraCompactConfig } from "./types";
+import { isOpenAICodexNativeModel } from "./utils";
 
 /** Track current model at runtime (updated by session_start and model_select events) */
 let currentModel: { id?: string; contextWindow?: number } | undefined;
@@ -23,6 +24,7 @@ const DEFAULT_CONFIG: UltraCompactConfig = {
 	keepPercentage: 0.3,
 	maxKeepTokens: 30000,
 	autoCompact: true,
+	deferToNativeCompaction: true,
 };
 
 function captureModel(model: any): void {
@@ -67,6 +69,7 @@ function reconfigureEngineForCurrentModel(engine: UltraCompactEngine): void {
  */
 function handleUltracompactCommand(
 	engine: UltraCompactEngine,
+	deferToNativeCompaction: boolean,
 ): (_args: any, ctx: any) => void {
 	return (_args: any, ctx: any) => {
 		// Guard against missing ctx or ctx.compact
@@ -76,7 +79,15 @@ function handleUltracompactCommand(
 		}
 
 		// Notify user that compaction is starting
-		notify(ctx, "Starting Ultra-compact compaction...", "info");
+		if (deferToNativeCompaction && isOpenAICodexNativeModel(ctx?.model)) {
+			notify(
+				ctx,
+				"OpenAI Codex compacts this model natively; running Pi compaction without ultra-compact compression.",
+				"info",
+			);
+		} else {
+			notify(ctx, "Starting Ultra-compact compaction...", "info");
+		}
 
 		// Reconfigure engine to current model before compaction
 		reconfigureEngineForCurrentModel(engine);
@@ -108,13 +119,24 @@ function handleUltracompactCommand(
  * - Tier-aware: uses micro (no LLM) at 60-90%, full at 90%+
  * - Circuit breaker: trips after N failures, falls back to lossy truncation
  * - Cache-aware: appends to previous summary (keeps prefix stable)
+ * - Native handoff: steps aside for providers that compact themselves
  */
 function handleBeforeCompact(
 	engine: UltraCompactEngine,
+	deferToNativeCompaction: boolean,
 ): (event: any, ctx: any) => Record<string, any> | undefined {
 	// Circuit breaker state (per-session)
 
 	return async (event: any, ctx: any) => {
+		// ── Native compaction handoff ──────────────────────────────────
+		// Pi runs every session_before_compact handler and keeps the last one that
+		// returns a compaction. Returning undefined here means the checkpoint-owning
+		// extension's entry stands, whichever order the two load in, and this turn
+		// stays out of the circuit-breaker bookkeeping.
+		if (deferToNativeCompaction && isOpenAICodexNativeModel(ctx?.model)) {
+			return undefined;
+		}
+
 		currentTurn++;
 
 		// ── Circuit breaker check ───────────────────────────────────────
@@ -309,10 +331,9 @@ export default function piUltraCompact(
 	config: UltraCompactConfig = {},
 ): void {
 	const mergedConfig = { ...DEFAULT_CONFIG, ...config };
+	const { deferToNativeCompaction = true, ...engineConfig } = mergedConfig;
 
-	const engine = new UltraCompactEngine({
-		...mergedConfig,
-	});
+	const engine = new UltraCompactEngine(engineConfig);
 
 	// Guard: ensure required Pi APIs are available
 	if (typeof pi?.registerCommand !== "function") {
@@ -326,7 +347,7 @@ export default function piUltraCompact(
 	pi.registerCommand("ultracompact", {
 		description:
 			"Ultra-compact compaction with maximum compression while preserving critical context.",
-		handler: handleUltracompactCommand(engine),
+		handler: handleUltracompactCommand(engine, deferToNativeCompaction),
 	});
 
 	// Track model changes at runtime so compaction adapts when user switches models
@@ -352,7 +373,10 @@ export default function piUltraCompact(
 
 	// Register automatic compaction hook (single handler)
 	if (mergedConfig.autoCompact) {
-		pi.on("session_before_compact", handleBeforeCompact(engine));
+		pi.on(
+			"session_before_compact",
+			handleBeforeCompact(engine, deferToNativeCompaction),
+		);
 	}
 }
 

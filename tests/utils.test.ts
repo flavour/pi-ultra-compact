@@ -11,6 +11,7 @@ import {
   extractByPattern,
   containsErrorIndicators,
   emptyCompactionResult,
+  isOpenAICodexNativeModel,
   KEYWORD_PATTERNS,
 } from "../extensions/utils";
 import type { Message } from "../extensions/types";
@@ -362,5 +363,39 @@ describe("KEYWORD_PATTERNS", () => {
       expect(entry.weight).toBeGreaterThan(0);
       expect(entry.weight).toBeLessThanOrEqual(1);
     }
+  });
+});
+
+describe("isOpenAICodexNativeModel", () => {
+  it("matches the Codex provider and Responses api together", () => {
+    expect(
+      isOpenAICodexNativeModel({
+        provider: "openai-codex",
+        api: "openai-codex-responses",
+        id: "gpt-5.3-codex",
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects a model that matches only one half", () => {
+    expect(
+      isOpenAICodexNativeModel({
+        provider: "openai-codex",
+        api: "openai-responses",
+      }),
+    ).toBe(false);
+    expect(
+      isOpenAICodexNativeModel({
+        provider: "openai",
+        api: "openai-codex-responses",
+      }),
+    ).toBe(false);
+    expect(isOpenAICodexNativeModel({ provider: "openai-codex" })).toBe(false);
+  });
+
+  it("rejects missing and non-object models", () => {
+    expect(isOpenAICodexNativeModel(undefined)).toBe(false);
+    expect(isOpenAICodexNativeModel(null)).toBe(false);
+    expect(isOpenAICodexNativeModel("openai-codex")).toBe(false);
   });
 });

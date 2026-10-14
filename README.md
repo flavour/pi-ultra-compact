@@ -26,6 +26,7 @@ Advanced compaction extension and skill for [Pi](https://pi.dev/) with automatic
 - **Content-aware token counting** — dynamic ratios for code, prose, and whitespace
 - **Token-Compressed Language (LLM Shorthand)** — high-density semantic style for extreme token efficiency
 - **Lost-in-the-Middle Mitigations** — Entropy Scoring and Redundancy Penalties to fight context bloat in long histories
+- **Native compaction handoff** — steps aside for providers that compact their own transcript (OpenAI Codex), so each model keeps exactly one compaction path
 
 ## Installation
 
@@ -77,6 +78,12 @@ If Pi does not expose model metadata, the extension uses a conservative 128K-tok
 - **User messages inviolable**: Never stripped regardless of token pressure.
 - **Cache-aware mode**: Previous summaries stay immutable — only new content pays prefill cost.
 
+### Native Compaction Handoff
+
+Some providers compact the transcript themselves and return an opaque checkpoint instead of text. OpenAI Codex (`openai-codex` provider with the `openai-codex-responses` api) does this, and extensions such as `pi-codex-compaction` store that checkpoint in Pi's compaction entry.
+
+Pi runs every `session_before_compact` handler and keeps the last one that returns a compaction, so two extensions that both produce a summary fight over load order. For Codex models this extension returns no result: the checkpoint owner's entry stands regardless of which extension loads first, and a text summary can never orphan the provider-side checkpoint chain. `/ultracompact` still runs Pi's compaction on those models and says so in the notice. Set `deferToNativeCompaction: false` to force ultra-compact compression on Codex models.
+
 ## Configuration
 
 Default settings work out of the box. The extension reads Pi's active model metadata and sets thresholds from `ctx.model.contextWindow` when available.
@@ -89,6 +96,7 @@ Default settings work out of the box. The extension reads Pi's active model meta
 | `keepPercentage` | 30% | Percentage of context to keep |
 | `maxKeepTokens` | 30,000 | Maximum tokens to keep |
 | `autoCompact` | true | Enable automatic compaction |
+| `deferToNativeCompaction` | true | Leave Codex models to native (checkpoint) compaction |
 | `cacheAware` | false | Immutable summary blocks (saves API costs) |
 | `maxEvictionLevel` | FULL_REMOVAL | Max eviction aggressiveness |
 | `outputHeadroom` | 4,096 | Tokens reserved for LLM response |
@@ -111,6 +119,7 @@ The extension does not ship its own model context-window table. Pi remains respo
 - Works with any Pi-compatible model
 - Compatible with gentle-engram (Engram memory backup)
 - Compatible with gentle-pi (SDD/OpenSpec)
+- Compatible with pi-codex-compaction (OpenAI Codex native checkpoints)
 - No conflicts with Pi's default compaction
 
 ## Changelog

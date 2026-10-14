@@ -34,6 +34,13 @@ export interface UltraCompactConfig {
 	maxKeepTokens?: number;
 	/** Enable automatic compaction */
 	autoCompact?: boolean;
+	/**
+	 * Step aside when the model's provider compacts natively (OpenAI Codex
+	 * encrypted checkpoints). The compaction entry is left to the extension that
+	 * owns those checkpoints, so a text summary cannot orphan the provider chain.
+	 * Default: true
+	 */
+	deferToNativeCompaction?: boolean;
 	/** Custom prompt for summarization */
 	customPrompt?: string;
 	/** Minimum messages required for structured summary (avoids bloat) */

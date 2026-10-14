@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-10-13
+
+### Added
+
+- **Native compaction handoff** — `session_before_compact` now returns no result for OpenAI Codex models (`openai-codex` provider with the `openai-codex-responses` api), so a checkpoint-owning extension such as `pi-codex-compaction` produces the compaction entry. Pi keeps the last handler that returns a compaction, which made the two extensions order-dependent before; the handoff removes that coupling and stops a text summary from orphaning a provider-side checkpoint chain.
+- **`deferToNativeCompaction` setting** (default `true`) — set to `false` to force ultra-compact compression on Codex models.
+- **`/ultracompact` notice on Codex models** — the command still runs Pi's compaction and says the model compacts natively, instead of promising ultra-compact compression.
+
+### Tests
+
+- 9 new tests: the Codex handoff, non-Codex models unaffected, provider-only matches rejected, the opt-out flag, both `/ultracompact` notices, and `isOpenAICodexNativeModel`.
+
 ## [1.3.0] - 2026-07-12
 
 ### Added

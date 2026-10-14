@@ -108,6 +108,27 @@ export function containsErrorIndicators(content: string): boolean {
 }
 
 /**
+ * True when the model's provider compacts the transcript itself.
+ *
+ * OpenAI Codex (`openai-codex` provider, `openai-codex-responses` api) returns
+ * opaque encrypted compaction checkpoints instead of text summaries. Writing a
+ * text summary over a native checkpoint orphans the provider-side chain, so
+ * pi-ultra-compact stays out of those compactions and lets the extension that
+ * owns the checkpoint (pi-codex-compaction) produce the entry.
+ *
+ * Matches Pi's own provider/api pairing; a model that only matches one half is
+ * not treated as native.
+ */
+export function isOpenAICodexNativeModel(model: unknown): boolean {
+	if (typeof model !== "object" || model === null) return false;
+	const candidate = model as { provider?: unknown; api?: unknown };
+	return (
+		candidate.provider === "openai-codex" &&
+		candidate.api === "openai-codex-responses"
+	);
+}
+
+/**
  * Create an empty CompactionResult with default values.
  */
 export function emptyCompactionResult(
