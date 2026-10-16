@@ -228,6 +228,8 @@ export function planPruning(
 	options: {
 		targetTokensSaved?: number;
 		editedIds?: ReadonlySet<string>;
+		/** Entries whose provider-side context an edit would invalidate. */
+		protectedIds?: ReadonlySet<string>;
 	} = {},
 ): PruningPlan {
 	const drafts: PiContextEditDraft[] = [];
@@ -253,6 +255,9 @@ export function planPruning(
 			const id = entry.sourceEntry?.id;
 			if (!id) return false;
 			if (policy.skipAlreadyEdited && options.editedIds?.has(id)) return false;
+			// A native checkpoint replays its own history, and the provider refuses
+			// the request once an edit touches entries it still retains.
+			if (options.protectedIds?.has(id)) return false;
 			return editableMessage(entry) !== undefined;
 		});
 

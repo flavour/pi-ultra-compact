@@ -12,7 +12,14 @@ import {
 	resolvePruningPolicy,
 } from "../extensions/pruning";
 import type { PiProjectedEntry } from "../extensions/types";
-import { filler, makeAssistantEntry, makeToolResultEntry, makeUserEntry } from "./helpers";
+import {
+	filler,
+	makeAssistantEntry,
+	makeCompactionEntry,
+	makeNativeCheckpointDetails,
+	makeToolResultEntry,
+	makeUserEntry,
+} from "./helpers";
 
 function makePi() {
 	const handlers: Record<string, Function[]> = {};
@@ -598,5 +605,109 @@ describe("engine compaction stage", () => {
 
 		expect(output).toContain("engine compaction at: 65536 (real tokens)");
 		expect(output).toContain("engine compactions: 1");
+	});
+});
+
+describe("pruning against a native checkpoint", () => {
+	const CODEX_KEY = "openai-codex:openai-codex-responses:gpt-5.3-codex";
+	const CODEX_MODEL = {
+		provider: "openai-codex",
+		api: "openai-codex-responses",
+		id: "gpt-5.3-codex",
+		contextWindow: 272000,
+	};
+
+	function toolPair(i: number, chars: number, side: string): PiProjectedEntry[] {
+		return [
+			makeAssistantEntry(`${side}a${i}`, { text: `step ${i}`, toolCalls: [`${side}c${i}`] }),
+			makeToolResultEntry(`${side}t${i}`, { text: filler(chars), toolCallId: `${side}c${i}` }),
+		];
+	}
+
+	/**
+	 * A checkpointed session as Pi projects it: the checkpoint entry, then the
+	 * pre-checkpoint entries it kept verbatim, then the work done since.
+	 */
+	function checkpointedProjection(keptTurns: number, postTurns: number, chars: number) {
+		const retained = Array.from({ length: keptTurns }, (_, i) => toolPair(i, chars, "r")).flat();
+		const post = Array.from({ length: postTurns }, (_, i) => toolPair(i, chars, "p")).flat();
+		const checkpoint = makeCompactionEntry("compact1", {
+			summary: "OpenAI Codex native compaction checkpoint (uuid).",
+			firstKeptEntryId: retained[0].sourceEntry.id,
+			parentId: "pre-t0",
+			details: makeNativeCheckpointDetails(CODEX_KEY),
+		});
+		if (post.length > 0) {
+			post[0].sourceEntry.parentId = checkpoint.sourceEntry.id;
+			for (let i = 1; i < post.length; i++) {
+				post[i].sourceEntry.parentId = post[i - 1].sourceEntry.id;
+			}
+		}
+		return {
+			entries: [checkpoint, ...retained, ...post],
+			retainedIds: retained.map((entry) => entry.sourceEntry.id),
+			postIds: post.map((entry) => entry.sourceEntry.id),
+		};
+	}
+
+	function codexCtx() {
+		return { ...ctxFor(272000), model: CODEX_MODEL };
+	}
+
+	function drafts(result: any) {
+		return (result?.entries ?? [])
+			.filter((entry: any) => entry.type === "context_edit")
+			.map((entry: any) => entry.targetId as string);
+	}
+
+	it("prunes only the entries the provider actually reads back", async () => {
+		const pi = makePi();
+		piUltraCompact(pi);
+		const { entries, retainedIds, postIds } = checkpointedProjection(10, 10, 30000);
+
+		const result = await turnEnd(pi, makeTurnEndEvent(entries), codexCtx());
+
+		const targets = drafts(result);
+		expect(targets.length).toBeGreaterThan(0);
+		expect(targets.some((id) => retainedIds.includes(id))).toBe(false);
+		expect(targets.every((id) => postIds.includes(id))).toBe(true);
+	});
+
+	it("prunes retained history when the compaction entry is a text summary", async () => {
+		const pi = makePi();
+		piUltraCompact(pi);
+		// Wide enough a deficit that the post-checkpoint entries alone cannot cover it,
+		// so an unprotected pass reaches back into the checkpointed history.
+		const { entries, retainedIds } = checkpointedProjection(10, 10, 30000);
+		(entries[0].sourceEntry as { details: unknown }).details = { ultracompact: true };
+
+		const result = await turnEnd(pi, makeTurnEndEvent(entries), codexCtx());
+
+		expect(drafts(result).some((id) => retainedIds.includes(id))).toBe(true);
+	});
+
+	it("prunes retained history when the checkpoint belongs to another model", async () => {
+		const pi = makePi();
+		piUltraCompact(pi, { summarization: { summaryMode: "pi" } });
+		const { entries, retainedIds } = checkpointedProjection(10, 10, 30000);
+
+		const result = await turnEnd(pi, makeTurnEndEvent(entries), ctxFor(272000));
+
+		expect(drafts(result).some((id) => retainedIds.includes(id))).toBe(true);
+	});
+
+	it("reports the protected count in the status output", async () => {
+		const pi = makePi();
+		piUltraCompact(pi);
+		const { entries } = checkpointedProjection(10, 10, 30000);
+
+		await turnEnd(pi, makeTurnEndEvent(entries), codexCtx());
+
+		const log = vi.spyOn(console, "log").mockImplementation(() => {});
+		pi._commands["ultra-compact-status"].handler({}, codexCtx());
+		const output = log.mock.calls.map((c) => c.join(" ")).join("\n");
+		log.mockRestore();
+
+		expect(output).toContain("native-protected entries: 21");
 	});
 });

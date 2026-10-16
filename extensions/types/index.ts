@@ -337,6 +337,12 @@ export interface PiProjectedEntry {
 		customType?: string;
 		/** Present on compaction entries. */
 		summary?: string;
+		/** Entry this one was appended after. */
+		parentId?: string | null;
+		/** First entry a compaction keeps verbatim. */
+		firstKeptEntryId?: string | null;
+		/** Extension data carried by the entry; native checkpoints mark themselves here. */
+		details?: unknown;
 	};
 	messages: PiContextMessage[];
 }

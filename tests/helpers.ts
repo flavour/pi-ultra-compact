@@ -92,3 +92,41 @@ export function makeToolResultEntry(
 export function filler(chars: number, unit = "x"): string {
 	return unit.repeat(Math.max(0, chars));
 }
+
+/** A compaction entry as the projection exposes it. */
+export function makeCompactionEntry(
+	id: string,
+	options: {
+		summary?: string;
+		firstKeptEntryId?: string | null;
+		details?: unknown;
+		parentId?: string | null;
+	} = {},
+): PiProjectedEntry {
+	const message: PiContextMessage = {
+		role: "compactionSummary",
+		content: options.summary ?? "earlier history summarized",
+	};
+	return {
+		sourceEntry: {
+			id,
+			type: "compaction",
+			message,
+			summary: message.content as string,
+			firstKeptEntryId: options.firstKeptEntryId ?? null,
+			details: options.details,
+			parentId: options.parentId ?? null,
+		},
+		messages: [message],
+	};
+}
+
+/** The `details` pi-codex-compaction stores on its compaction entry. */
+export function makeNativeCheckpointDetails(modelKey: string): unknown {
+	return {
+		kind: "openai-codex-native-compaction",
+		version: 1,
+		modelKey,
+		replacementHistory: [{ type: "compaction", encrypted_content: "opaque" }],
+	};
+}

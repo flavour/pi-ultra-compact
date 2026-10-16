@@ -28,6 +28,7 @@ import {
 import type { EngineCompactionPlan } from "./engine-compaction";
 import { UltraCompactEngine } from "./engine";
 import { DEFAULT_HANDOFF_MESSAGE, resolveHandoffNudge, shouldFireNudge } from "./handoff";
+import { resolveNativeProtectedIds } from "./native-checkpoint";
 import {
 	estimateMessagesTokens,
 	estimateProjectionTokens,
@@ -57,6 +58,7 @@ let nudgeFired = false;
 let lastPruneSummary = "";
 let engineCompactions = 0;
 let lastEngineCompaction = "";
+let lastNativeProtected = 0;
 
 /** Pi's default `compaction.reserveTokens`. */
 const DEFAULT_RESERVE_TOKENS = 16384;
@@ -472,6 +474,13 @@ function handleTurnEnd(
 		const drafts: PiContextEditDraft[] = [];
 		let estimatedTokensSaved = 0;
 
+		// A provider that checkpoints its own context replays that checkpoint instead
+		// of the entries it replaced, and refuses the request once a context edit
+		// touches history the checkpoint still retains. Pruning those entries would
+		// save nothing and break the run, so they leave the candidate pool.
+		const protectedIds = resolveNativeProtectedIds(entries, ctx?.model);
+		lastNativeProtected = protectedIds.size;
+
 		const pruneAt = resolvePruneAt(contextWindow, config);
 		const targetRatio = policy.targetRatio ?? 0.28;
 		const pruneTarget = Math.floor(contextWindow * targetRatio);
@@ -483,6 +492,7 @@ function handleTurnEnd(
 				const plan = planPruning(entries, policy, {
 					targetTokensSaved: Math.ceil(realDeficit / ratio),
 					editedIds: editedEntryIds,
+					protectedIds,
 				});
 
 				for (const draft of plan.drafts) editedEntryIds.add(draft.targetId);
@@ -619,6 +629,7 @@ function handleStatusCommand(
 			`summarize at: ${summarizeAt} (real tokens)`,
 			`pruned entries: ${editedEntryIds.size}`,
 			`last prune pass: ${lastPruneSummary || "none"}`,
+			`native-protected entries: ${lastNativeProtected}`,
 			`engine compactions: ${engineCompactions}`,
 			`last engine compaction: ${lastEngineCompaction || "none"}`,
 			`calibrated: ${diagnostics.calibrated}`,
@@ -739,6 +750,7 @@ export {
 	resolvePruningPolicy,
 } from "./pruning";
 export { resolveHandoffNudge, shouldFireNudge } from "./handoff";
+export { NATIVE_COMPACTION_KIND, resolveNativeProtectedIds } from "./native-checkpoint";
 export {
 	findEngineCutPoint,
 	planEngineCompaction,
@@ -774,4 +786,5 @@ export function __resetModuleState(): void {
 	lastPruneSummary = "";
 	engineCompactions = 0;
 	lastEngineCompaction = "";
+	lastNativeProtected = 0;
 }

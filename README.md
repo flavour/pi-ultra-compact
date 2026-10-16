@@ -111,6 +111,8 @@ Some providers compact the transcript themselves and return an opaque checkpoint
 
 Pi runs every `session_before_compact` handler and keeps the last one that returns a compaction, so two extensions that both produce a summary fight over load order. For Codex models this extension returns no result: the checkpoint owner's entry stands regardless of which extension loads first, and a text summary can never orphan the provider-side checkpoint chain. `/ultracompact` still runs Pi's compaction on those models and says so in the notice. Set `deferToNativeCompaction: false` to force ultra-compact compression on Codex models.
 
+The pruning stage has its own constraint on those models. A native checkpoint is opaque: the provider replays it in place of the entries it replaced, and refuses a request where a context edit touches history the checkpoint still retains, because an encrypted blob cannot be rewritten. Pruning those entries would save nothing — the provider never receives them — and would abort the run outright. So the pass leaves the checkpointed block alone and prunes only entries appended after it. A text summary, or a checkpoint written for a different model, protects nothing; local models read the retained entries, so pruning them stays both useful and safe. `/ultra-compact-status` reports how many entries are currently protected.
+
 ## Configuration
 
 Default settings work out of the box. The extension reads Pi's active model metadata and sets thresholds from `ctx.model.contextWindow` when available.
@@ -169,7 +171,7 @@ llama.cpp-style servers fail a request when `prompt tokens + max_tokens` exceeds
 | Command | Description |
 |---------|-------------|
 | `/ultracompact` | Trigger manual ultra-compact compaction |
-| `/ultra-compact-status` | Corrected context usage, the learned estimator ratio, all three stage thresholds, and pruning/compaction counters |
+| `/ultra-compact-status` | Corrected context usage, the learned estimator ratio, all three stage thresholds, pruning/compaction counters, and native-checkpoint entries held back |
 
 ## Model Metadata
 
@@ -180,7 +182,7 @@ The extension does not ship its own model context-window table. Pi remains respo
 - Works with any Pi-compatible model
 - Compatible with gentle-engram (Engram memory backup)
 - Compatible with gentle-pi (SDD/OpenSpec)
-- Compatible with pi-codex-compaction (OpenAI Codex native checkpoints)
+- Compatible with pi-codex-compaction (OpenAI Codex native checkpoints): neither extension produces the other's compaction entry, and pruning stays clear of checkpoint-retained history
 - No conflicts with Pi's default compaction
 
 ## Changelog

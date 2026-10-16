@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Pruning could break a native checkpoint session** — the pruning stage ran on OpenAI Codex models even though `deferToNativeCompaction` only gated the summarization stages. pi-codex-compaction replays its opaque checkpoint instead of the entries it replaced, and refuses any request where a `context_edit` touches history that checkpoint still retains, so the next request was aborted with an empty input. Entries inside the checkpointed block now leave the candidate pool; entries appended after the checkpoint are still prunable, and a text summary or a checkpoint from another model leaves nothing protected.
+
+### Tests
+
+- 12 new tests: native checkpoint detection, the protected block in the projection, pruning confined to post-checkpoint entries, and both controls (text summary and foreign checkpoint still prune freely).
+
 ## [1.5.0] - 2026-10-15
 
 ### Added
