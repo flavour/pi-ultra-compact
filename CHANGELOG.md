@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-10-15
+
+### Added
+
+- **Pruning stage** — at a lower threshold (default 35% of the context window) older tool results and assistant reasoning blocks are rewritten out of the model-visible projection through Pi `context_edit` entries. No LLM call, and the transcript keeps the originals. Runs at `turn_end`, so it takes effect on the next request mid-run. Three levels: strip reasoning, excerpt large tool outputs, collapse the rest to a marker; whole-message removal is not reachable by default (`maxLevel`).
+- **Corrected token accounting** — Pi switches from exact provider usage to a 3.5 chars/token projection estimate as soon as a `context_edit` is in the session, which under-counts local-model contexts by roughly 46% (Qwen tokenizer measured against llama.cpp). A real-token baseline is kept from `usage.totalTokens` and the estimator's error is calibrated from observed turns, so both thresholds are evaluated against tokens the server counts.
+- **Engine compaction stage** — at a lower compaction threshold (default 50% of the context window) the engine's structured summary is written as a Pi `compaction` entry returned from `turn_end`. No LLM call, and no aborted run: Pi commits boundary drafts and rebuilds the projection before the next provider request. The cut keeps roughly `keepRecentTokens` of the newest entries verbatim and never begins the kept tail at a tool result, so tool-call pairing survives. Pi's own summarizer later *updates* that summary, because `prepareCompaction` reads the latest compaction entry and switches to its update prompt.
+- **`/ultra-compact-status` command** — prints corrected tokens, the learned estimator ratio, all three stage thresholds, pruning/compaction counters, and the `reserveTokens` value that would put Pi's estimate-based trigger on the extension's real-token threshold.
+- **Optional wrap-up nudge** (`handoffNudge`, default `false`) — sends a steering message asking the agent to reach a safe stopping point, gated on run mode (default: interactive only) and once per compaction cycle.
+- **`summarization.escalation`** — `native` (default, let Pi compact), `steer` (wrap-up message), or `compact` (call `ctx.compact()`, which aborts the in-flight run).
+- **`session_compact_failed` is surfaced** — a compaction that 400s at the provider now reaches the UI, and console when there is no UI.
+
+### Changed
+
+- **Summarization defaults to Pi's own summarizer at the higher threshold.** `session_before_compact` returns no result (`summarization.summaryMode: "engine-then-pi"`), so Pi writes the summary with the session model — it already handles iterative summary updates, keeps `keepRecentTokens` verbatim, and accounts for the summary's own usage. `"engine"` restores the previous behaviour of this extension producing the local structured summary whenever Pi triggers; `"pi"` skips the engine stage entirely.
+- **Stage thresholds use corrected tokens**, not Pi's projection estimate. With an accurate estimator the ratio is 1 and behaviour is unchanged.
+
+### Fixed
+
+- **Silent compaction failures** — the `session_before_compact` catch block discarded the error, so an overflow-retry compaction that failed again left no trace.
+
+### Tests
+
+- 107 new tests across `pruning`, `accounting`, `handoff`, `engine-compaction` and `turn-end`; 460 total.
+
 ## [1.4.0] - 2026-10-13
 
 ### Added

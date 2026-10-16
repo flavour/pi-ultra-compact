@@ -27,6 +27,8 @@ Advanced compaction extension and skill for [Pi](https://pi.dev/) with automatic
 - **Token-Compressed Language (LLM Shorthand)** — high-density semantic style for extreme token efficiency
 - **Lost-in-the-Middle Mitigations** — Entropy Scoring and Redundancy Penalties to fight context bloat in long histories
 - **Native compaction handoff** — steps aside for providers that compact their own transcript (OpenAI Codex), so each model keeps exactly one compaction path
+- **Three-stage compaction** — non-LLM pruning through Pi `context_edit` entries, then a non-LLM engine summary, then Pi's LLM summarizer only when the cheaper stages run out
+- **Corrected token accounting** — calibrates Pi's projection estimate against real provider tokens, so thresholds mean the same thing on local models as on hosted ones
 
 ## Installation
 
@@ -56,11 +58,36 @@ If Pi does not expose model metadata, the extension uses a conservative 128K-tok
 
 ## How It Works
 
-### Three-Tier System
+### Three-Stage Compaction (default)
 
-1. **Preemptive check** (every turn): Projects next turn's token usage. If projected > 60% of context, triggers micro-compaction.
-2. **Micro-compaction** (60-90% usage): Strips reasoning blocks + bulk tool outputs. No LLM call. Runs in microseconds.
-3. **Full compaction** (90%+ usage): Graduated eviction preconditions the input, then structured summarization produces the final compacted context.
+Compaction is split into three independently thresholded stages, so the expensive stage runs as late and as rarely as possible. Each stage is measured against real tokens (see Corrected Token Accounting), and each runs at the turn boundary, so it takes effect on the very next request without aborting anything.
+
+1. **Pruning** (default: 35% of the context window). Older tool results and assistant reasoning blocks are rewritten out of the model-visible projection through Pi `context_edit` entries. No LLM call, no summarization, and the transcript keeps the originals — only the projection changes.
+2. **Engine compaction** (default: 50%). The engine's structured summary is written as a Pi `compaction` entry, cutting the oldest entries out of the projection and keeping roughly `keepRecentTokens` of the newest ones verbatim. Still no LLM call, and no aborted run — a compaction returned from a boundary event is committed by Pi and re-projected before the next request.
+3. **Pi compaction** (default: Pi's own trigger, `contextWindow - reserveTokens`). Pi's native summarizer runs with the session model and writes a better summary. It finds the engine's summary in place and *updates* it — Pi reads the latest compaction entry and switches to its update prompt — so the two summarizers compose rather than compete.
+
+Pruning rewrites *content*, never whole messages, so assistant tool calls stay paired with their tool results. Error outputs, user messages and the last four assistant turns are never touched. The engine stage never cuts between an assistant message and its tool results: the first kept entry is always a user, assistant, custom or summary message.
+
+Set `summarization.summaryMode: "pi"` to skip stage 2, or `"engine"` to have the engine write the summary whenever *Pi* triggers compaction instead of at its own threshold.
+
+### Corrected Token Accounting
+
+Pi measures context exactly (`usage.totalTokens`) until a `context_edit` appears in the session, then switches to estimating the projection at 3.5 chars/token. On local models that estimate under-counts: measured against a llama.cpp server with a Qwen tokenizer, tool output lands nearer 2.4 chars/token, so a threshold configured at 128k would fire near 190k real tokens.
+
+The extension keeps a real-token baseline from provider usage and calibrates the estimator's error from observed turns, so both thresholds are evaluated against tokens the server actually counts. `/ultra-compact-status` prints the learned ratio.
+
+Pi's own auto-compaction trigger still compares its *estimate* to `contextWindow - reserveTokens`, so on a local model it fires later in real tokens than the number suggests. `/ultra-compact-status` prints the `reserveTokens` value that would put Pi's trigger at the extension's summarize threshold. Keep the model's `maxTokens` capped when you raise `reserveTokens` — Pi sizes the summary request as `min(0.8 × reserveTokens, model.maxTokens)`.
+
+### What The Engine Summary Contains
+
+The engine writes no model call: it classifies the entries leaving the projection and rebuilds them as a dense markdown summary. That is what stage 2 produces, and what stage 3 replaces when `summaryMode: "engine"` is set.
+
+- Goals, key decisions, errors and fixes, and next steps, extracted by pattern and compressed to shorthand (`#G`, `#D`, `#E`, `#N`)
+- Files read and modified, carried into Pi's next compaction so the list survives (`#F`)
+- A compressed rendering of the remaining conversation (`#C`)
+- The previous summary, prefixed as `#Prev` rather than discarded, so repeated compactions accumulate
+
+It is fast, free and deterministic, and it is blind to anything that does not match a pattern — the reasoning that connected two decisions, for instance. That is exactly what Pi's summarizer is still needed for at the higher threshold.
 
 ### Eviction Levels
 
@@ -104,11 +131,45 @@ Default settings work out of the box. The extension reads Pi's active model meta
 | `preemptiveWatermark` | 0.70 | Preemptive trigger level |
 | `hardWatermark` | 0.95 | Reactive fallback level |
 
+### Stage Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `pruning.enabled` | true | Enable the non-LLM pruning stage |
+| `pruning.atRatio` | 0.35 | Fraction of the context window at which pruning starts |
+| `pruning.atTokens` | unset | Absolute token threshold; overrides `atRatio` |
+| `pruning.targetRatio` | 0.28 | Fraction of the window pruning works usage back down to |
+| `pruning.maxLevel` | 3 (`STRIP_ARTIFACTS`) | Most aggressive pruning level allowed |
+| `pruning.keepRecentTurns` | 4 | Assistant turns that are never pruned |
+| `pruning.minEntryChars` | 400 | Smallest tool result eligible for level 3 |
+| `pruning.bulkMinChars` | 4000 | Tool results at least this large get a head excerpt at level 2 |
+| `pruning.bulkExcerptChars` | 1200 | Head excerpt kept at level 2 |
+| `pruning.order` | `"newest"` | Visit order; `"newest"` preserves the longest cached prefix |
+| `summarization.summaryMode` | `"engine-then-pi"` | `"engine-then-pi"` = engine at the lower threshold, Pi at the higher; `"pi"` = Pi only; `"engine"` = engine whenever Pi triggers |
+| `summarization.engineAtRatio` | 0.5 | Lower compaction threshold, where the engine stage writes its summary |
+| `summarization.engineAtTokens` | unset | Absolute lower compaction threshold; overrides `engineAtRatio` |
+| `summarization.keepRecentTokens` | Pi's `keepRecentTokens` | Verbatim tail the engine stage keeps |
+| `summarization.minSavingRatio` | 0.05 | Skip the engine stage unless it reclaims this fraction of the window |
+| `summarization.atRatio` / `atTokens` | Pi's `reserveTokens` | Where Pi's summarization stage is allowed to start |
+| `summarization.escalation` | `"native"` | `"native"` = let Pi compact, `"steer"` = send a wrap-up message, `"compact"` = call `ctx.compact()` (aborts the in-flight run) |
+| `handoffNudge.enabled` | false | Send a wrap-up/handoff message ahead of compaction |
+| `handoffNudge.atRatio` | 0.4 | Where the nudge fires |
+| `handoffNudge.modes` | `["tui"]` | Run modes the nudge may interrupt |
+| `handoffNudge.oncePerCompaction` | true | Fire at most once per compaction cycle |
+| `handoffNudge.message` | built-in | Nudge text |
+
+The nudge is off by default because it interrupts the current task. That is useful when a human is at the keyboard and can restart the agent context, and harmful for a long-running agent, which would just stop mid-step.
+
+### Local Servers That Reject Oversized Requests
+
+llama.cpp-style servers fail a request when `prompt tokens + max_tokens` exceeds `n_ctx` rather than truncating it. Pi sizes the compaction summary's `max_tokens` as `min(0.8 × reserveTokens, model.maxTokens)`, so raising a model's `compaction.modelOverrides.reserveTokens` to make compaction fire early also asks for an enormous completion, and the request 400s. Cap the model's `maxTokens` in Pi's model store as well; a `before_provider_request` handler can clamp it per request, but the durable fix is the model metadata.
+
 ## Commands
 
 | Command | Description |
 |---------|-------------|
 | `/ultracompact` | Trigger manual ultra-compact compaction |
+| `/ultra-compact-status` | Corrected context usage, the learned estimator ratio, all three stage thresholds, and pruning/compaction counters |
 
 ## Model Metadata
 

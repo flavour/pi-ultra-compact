@@ -17,7 +17,7 @@ Use this skill when:
 - Session context is approaching limits
 - You need to compress conversation history while preserving critical information
 - Manual compaction is needed via `/ultracompact`
-- Auto-compaction triggers when context exceeds 80% of your model's detected context window
+- Pruning or compaction thresholds trigger automatically (see below)
 
 ## Supported Models
 
@@ -43,9 +43,17 @@ Use the `/ultracompact` command for manual compaction:
 /ultracompact
 ```
 
-### 2. Auto-Compaction
+### 2. Three-Stage Auto-Compaction
 
-The extension auto-detects your model from Pi's configuration and sets the threshold at 80% of its context window:
+By default compaction runs in three stages, each with its own threshold, cheapest first:
+
+1. **Pruning** at 35% of the model's context window — older tool results and reasoning blocks are rewritten out of the model-visible projection. No LLM call, no summarization.
+2. **Engine compaction** at 50% — a structured summary is written as a compaction entry, cutting the oldest entries and keeping roughly `keepRecentTokens` of the newest verbatim. Still no LLM call, and the run is never aborted.
+3. **Pi compaction** at Pi's own trigger (`contextWindow - reserveTokens`) — Pi's native summarizer runs with the session model and updates the summary that is already there.
+
+All three thresholds are evaluated against *corrected* token counts: real provider tokens, calibrated against Pi's projection estimate. Run `/ultra-compact-status` to see the corrected count, the learned ratio, the current thresholds, and the `reserveTokens` value that would move Pi's own trigger onto the real-token target.
+
+Set `summarization.summaryMode: "pi"` to skip the engine stage, or `"engine"` to have this extension write the summary whenever *Pi* triggers compaction; in that mode the engine auto-detects its threshold from Pi's configuration at 80% of the model's context window:
 
 | Model | Context Window | Threshold (80%) |
 |-------|---------------|-----------------|
@@ -125,6 +133,7 @@ Modified:
 - **Breaking references**: Keep file paths and function names intact
 - **Forgetting decisions**: Always preserve the reasoning behind choices
 - **Wrong threshold**: Extension auto-detects from model - set `thresholdTokens` explicitly in config only to override
+- **Interrupting a running agent**: the wrap-up nudge (`handoffNudge`) is off by default because it stops the agent mid-step; enable it only when a human is driving and can restart the context
 
 ## Verification
 
@@ -146,6 +155,7 @@ pi install npm:pi-ultra-compact
 | Command | Description |
 |---------|-------------|
 | `/ultracompact` | Trigger manual ultra-compact compaction |
+| `/ultra-compact-status` | Corrected context usage, learned estimator ratio, and both stage thresholds |
 
 > **Note:** `/compression-level` was removed. Compression uses the engine-based approach with automatic model-aware thresholds.
 

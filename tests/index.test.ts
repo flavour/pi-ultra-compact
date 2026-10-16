@@ -340,7 +340,7 @@ describe("session_before_compact hook", () => {
 
 	it("performs compaction when tokens exceed threshold", async () => {
 		const pi = makePiMock();
-		piUltraCompact(pi, { thresholdTokens: 100 });
+		piUltraCompact(pi, { thresholdTokens: 100, summarization: { summaryMode: "engine" } });
 		const handler = getBeforeCompactHandler(pi);
 		const result = await handler(
 			{
@@ -362,7 +362,7 @@ describe("session_before_compact hook", () => {
 
 	it("always compacts for manual /ultracompact invocation", async () => {
 		const pi = makePiMock();
-		piUltraCompact(pi);
+		piUltraCompact(pi, { summarization: { summaryMode: "engine" } });
 		const handler = getBeforeCompactHandler(pi);
 		const result = await handler(
 			{
@@ -426,7 +426,7 @@ describe("session_before_compact hook", () => {
 
 	it("works without ui.notify", async () => {
 		const pi = makePiMock();
-		piUltraCompact(pi, { thresholdTokens: 100 });
+		piUltraCompact(pi, { thresholdTokens: 100, summarization: { summaryMode: "engine" } });
 		const handler = getBeforeCompactHandler(pi);
 		const result = await handler(
 			{
@@ -446,7 +446,7 @@ describe("session_before_compact hook", () => {
 
 	it("includes previous summary in cache-aware mode", async () => {
 		const pi = makePiMock();
-		piUltraCompact(pi, { thresholdTokens: 100, cacheAware: true });
+		piUltraCompact(pi, { thresholdTokens: 100, cacheAware: true, summarization: { summaryMode: "engine" } });
 		const handler = getBeforeCompactHandler(pi);
 		const result = await handler(
 			{
@@ -488,6 +488,7 @@ describe("circuit breaker", () => {
 				thresholdTokens: 100,
 				circuitBreakerMaxFailures: 2,
 				circuitBreakerCooldown: 10,
+				summarization: { summaryMode: "engine" },
 			});
 			const handler = getBeforeCompactHandler(pi);
 
@@ -622,7 +623,7 @@ describe("empty summary validation in before_compact", () => {
 
 	it("validates non-empty summary on success", async () => {
 		const pi = makePiMock();
-		piUltraCompact(pi, { thresholdTokens: 100 });
+		piUltraCompact(pi, { thresholdTokens: 100, summarization: { summaryMode: "engine" } });
 		const handler = getBeforeCompactHandler(pi);
 
 		const result = await handler(

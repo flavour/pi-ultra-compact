@@ -163,7 +163,9 @@ describe("native compaction handoff", () => {
 	});
 
 	it("still compacts other models at the same token pressure", async () => {
-		const { handlers } = registerExtension();
+		const { handlers } = registerExtension({
+			summarization: { summaryMode: "engine" },
+		});
 
 		const result = await handlers.get("session_before_compact")?.(
 			makeCompactionEvent(),
@@ -174,7 +176,9 @@ describe("native compaction handoff", () => {
 	});
 
 	it("does not defer when only the provider matches", async () => {
-		const { handlers } = registerExtension();
+		const { handlers } = registerExtension({
+			summarization: { summaryMode: "engine" },
+		});
 
 		const result = await handlers.get("session_before_compact")?.(
 			makeCompactionEvent(),
@@ -188,7 +192,10 @@ describe("native compaction handoff", () => {
 	});
 
 	it("compacts Codex models when deferToNativeCompaction is disabled", async () => {
-		const { handlers } = registerExtension({ deferToNativeCompaction: false });
+		const { handlers } = registerExtension({
+			deferToNativeCompaction: false,
+			summarization: { summaryMode: "engine" },
+		});
 
 		const result = await handlers.get("session_before_compact")?.(
 			makeCompactionEvent(),
